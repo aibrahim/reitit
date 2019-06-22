@@ -7,27 +7,40 @@
    [reitit.coercion.spec :as rss]
    [reitit.frontend :as rf]
    [reitit.frontend.controllers :as rfc]
-   [reitit.frontend.easy :as rfe]))
+   [reitit.frontend.easy :as rfe]
+   [frontend-re-frame.db :refer [db->local-store]]))
+
+;;; Interceptors ;;;
+(def ->local-store (re-frame/after db->local-store))
 
 ;;; Events ;;;
 
-(re-frame/reg-event-db
+(re-frame/reg-event-fx
  ::initialize-db
- (fn [_ _]
-   {:current-route nil}))
+ [(re-frame/inject-cofx :local-store-db)]
+ (fn [{:keys [db local-store-db]}]
+   {:db (merge db local-store-db)}))
 
 (re-frame/reg-event-fx
  ::navigate
+ [ ->local-store ]
  (fn [db [_ route]]
    ;; See `navigate` effect in routes.cljs
    {::navigate! route}))
 
 (re-frame/reg-event-db
  ::navigated
+ [ ->local-store ]
  (fn [db [_ new-match]]
    (let [old-match   (:current-route db)
          controllers (rfc/apply-controllers (:controllers old-match) new-match)]
      (assoc db :current-route (assoc new-match :controllers controllers)))))
+
+(re-frame/reg-event-db
+ ::set-input-value
+ [ ->local-store ]
+ (fn [db [_ v]]
+   (assoc db :current-input-value v)))
 
 ;;; Subscriptions ;;;
 
@@ -35,6 +48,11 @@
  ::current-route
  (fn [db]
    (:current-route db)))
+
+(re-frame/reg-sub
+ ::get-input-value
+ (fn [db]
+   (:current-input-value db)))
 
 ;;; Views ;;;
 
@@ -48,7 +66,10 @@
 
 (defn sub-page1 []
   [:div
-   [:h1 "This is sub-page 1"]])
+   [:h1 "This is sub-page 1"]
+   [:input {:type "text"
+            :value @(re-frame/subscribe [::get-input-value])
+            :on-change #(re-frame/dispatch [::set-input-value (.. % -target -value)])}]])
 
 (defn sub-page2 []
   [:div
@@ -61,6 +82,16 @@
  ::navigate!
  (fn [k params query]
    (rfe/push-state k params query)))
+
+;;; Coeffects ;;;
+
+(re-frame/reg-cofx
+ :local-store-db
+ (fn [cofx _]
+   (assoc cofx :db
+          (into (sorted-map)
+                (some->> (.getItem js/localStorage "app-db")
+                         (cljs.reader/read-string))))))
 
 ;;; Routes ;;;
 
@@ -153,3 +184,4 @@
   (re-frame/dispatch-sync [::initialize-db])
   (dev-setup)
   (mount-root))
+
